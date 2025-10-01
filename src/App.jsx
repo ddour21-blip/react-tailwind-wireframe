@@ -229,6 +229,16 @@ test.describe('업로드 > 알림 설정 > 편집 > 템플릿 선택', () => {
   });
 });`;
 
+const createShareSlug = (seed) => {
+  let hash = 0;
+  const normalized = seed.replace(/\s+/g, "").toLowerCase();
+  for (let index = 0; index < normalized.length; index += 1) {
+    hash = (hash << 5) - hash + normalized.charCodeAt(index);
+    hash |= 0;
+  }
+  return Math.abs(hash).toString(16).padStart(8, "0");
+};
+
 export default function App() {
   const [activeTab, setActiveTab] = useState("run");
   const [url, setUrl] = useState("https://staging.xr-project.io");
@@ -236,8 +246,52 @@ export default function App() {
   const [loginRequired, setLoginRequired] = useState(true);
   const [selectedEngine, setSelectedEngine] = useState("playwright");
   const [selectedLLM, setSelectedLLM] = useState("openai");
+  const [copyStatus, setCopyStatus] = useState("idle");
 
   const activeScenario = useMemo(() => scenarioBlueprint, []);
+  const shareSlug = useMemo(
+    () =>
+      createShareSlug(
+        [url, fileName, selectedEngine, selectedLLM, loginRequired ? "login" : "nologin"].join("|"),
+      ),
+    [fileName, loginRequired, selectedEngine, selectedLLM, url],
+  );
+
+  const shareUrl = useMemo(() => {
+    const fallbackOrigin = "https://qa-auto.preview";
+    const origin = typeof window !== "undefined" && window.location.origin ? window.location.origin : fallbackOrigin;
+    return `${origin.replace(/\/$/, "")}/app/${shareSlug}`;
+  }, [shareSlug]);
+
+  const shareReady = Boolean(url && fileName);
+
+  const handleCopyShareUrl = async () => {
+    if (!shareUrl) {
+      return;
+    }
+
+    try {
+      if (typeof navigator !== "undefined" && navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(shareUrl);
+      } else if (typeof document !== "undefined") {
+        const textarea = document.createElement("textarea");
+        textarea.value = shareUrl;
+        textarea.setAttribute("readonly", "");
+        textarea.style.position = "absolute";
+        textarea.style.left = "-9999px";
+        document.body.appendChild(textarea);
+        textarea.select();
+        document.execCommand("copy");
+        document.body.removeChild(textarea);
+      }
+      setCopyStatus("copied");
+    } catch (error) {
+      console.error("URL copy failed", error);
+      setCopyStatus("failed");
+    } finally {
+      setTimeout(() => setCopyStatus("idle"), 2000);
+    }
+  };
 
   return (
     <div className="min-h-screen bg-slate-100 text-gray-900">
@@ -492,6 +546,72 @@ export default function App() {
                       Dry-run 대기
                     </span>
                   </div>
+                </div>
+              </div>
+            </SectionCard>
+            <SectionCard
+              title="최종 공유 URL 생성"
+              description="설정한 정보를 바탕으로 QA 자동화 워크스페이스를 공유할 수 있는 링크를 발행합니다."
+              actions={<StatusBadge status={shareReady ? "success" : "waiting"} />}
+            >
+              <div className="space-y-4">
+                <div className="rounded-3xl border border-indigo-100 bg-indigo-50 p-5 text-sm text-indigo-700">
+                  아래 링크는 현재 설정(접속 URL, 로그인 정책, LLM/Runner 선택)을 기준으로 생성된 고유 식별자와 함께
+                  제공됩니다. 공유 받은 사람은 mgx 스타일의 고정 URL(
+                  <span className="font-mono text-[11px] text-indigo-600">/app/{shareSlug}</span>
+                  )로 바로 접속해 QA 자동화를 실행할 수 있습니다.
+                </div>
+                <div className="flex flex-col gap-2 text-sm">
+                  <span className="font-semibold text-gray-700">공유 URL</span>
+                  <div className="flex flex-wrap items-center gap-3">
+                    <a
+                      href={shareUrl}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="max-w-full truncate rounded-2xl border border-gray-200 bg-white px-4 py-2 font-mono text-xs text-indigo-600 shadow-sm hover:border-indigo-300"
+                    >
+                      {shareUrl}
+                    </a>
+                    <button
+                      onClick={handleCopyShareUrl}
+                      className={`rounded-full px-4 py-2 text-xs font-semibold shadow-sm transition ${
+                        copyStatus === "copied"
+                          ? "bg-emerald-500 text-white"
+                          : copyStatus === "failed"
+                          ? "bg-red-500 text-white"
+                          : "bg-indigo-600 text-white hover:bg-indigo-500"
+                      }`}
+                    >
+                      {copyStatus === "copied" && "복사 완료"}
+                      {copyStatus === "failed" && "복사 실패"}
+                      {copyStatus === "idle" && "URL 복사"}
+                    </button>
+                  </div>
+                </div>
+                <div className="grid gap-4 md:grid-cols-3 text-xs text-gray-600">
+                  {[
+                    { label: "접속 URL", value: url || "-" },
+                    { label: "기획서 파일", value: fileName || "-" },
+                    { label: "실행 엔진", value: selectedEngine === "playwright" ? "Playwright" : "Selenium" },
+                    { label: "LLM", value: selectedLLM === "openai" ? "OpenAI GPT" : "Google Gemini" },
+                    { label: "로그인 처리", value: loginRequired ? "필수 (세션 선점)" : "불필요" },
+                    { label: "생성된 ID", value: shareSlug },
+                  ].map((item) => (
+                    <div key={item.label} className="rounded-2xl border border-gray-200 bg-white p-4">
+                      <p className="font-semibold text-gray-600">{item.label}</p>
+                      <p className="mt-1 break-all font-mono text-[11px] text-gray-500">{item.value}</p>
+                    </div>
+                  ))}
+                </div>
+                <div className="rounded-2xl border border-gray-200 bg-white p-4 text-xs text-gray-600">
+                  <p className="font-semibold text-gray-700">배포 가이드</p>
+                  <p className="mt-2 leading-5">
+                    1) <code className="rounded bg-gray-100 px-1 py-0.5">npm run build</code>로 정적 번들을 생성합니다.
+                    <br />2) 번들 출력(<code className="rounded bg-gray-100 px-1 py-0.5">dist/</code>)을 Static Hosting(MGX, Vercel,
+                    Netlify 등)에 업로드합니다.
+                    <br />3) 호스팅 도메인을 <span className="font-mono text-[11px] text-indigo-600">/app/{shareSlug}</span> 경로와 함께
+                    공유하면, 위 링크와 동일한 QA 자동화 대시보드에 접속할 수 있습니다.
+                  </p>
                 </div>
               </div>
             </SectionCard>
